@@ -1,6 +1,6 @@
 {
   "name": "altv-rpc",
-  "version": "0.1",
+  "version": "0.1.0",
   "description": "An asynchronous RPC implementation for alt:V",
   "main": "dist/altv-rpc.min.js",
   "types": "dist/altv-rpc.d.ts",
