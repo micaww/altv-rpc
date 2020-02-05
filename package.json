@@ -1,0 +1,37 @@
+{
+  "name": "altv-rpc",
+  "version": "0.1",
+  "description": "An asynchronous RPC implementation for alt:V",
+  "main": "dist/altv-rpc.min.js",
+  "types": "dist/altv-rpc.d.ts",
+  "scripts": {
+    "watch": "rollup -c -w",
+    "build": "rollup -c --environment BUILD:production",
+    "type-check": "tsc"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/micaww/altv-rpc.git"
+  },
+  "author": "micaww",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/micaww/altv-rpc/issues"
+  },
+  "homepage": "https://github.com/micaww/altv-rpc#readme",
+  "dependencies": {},
+  "devDependencies": {
+    "@babel/core": "^7.8.4",
+    "@babel/preset-env": "^7.8.4",
+    "@babel/preset-typescript": "^7.8.3",
+    "@rollup/plugin-node-resolve": "^7.1.1",
+    "rollup": "^1.31.0",
+    "rollup-plugin-babel": "^4.3.3",
+    "rollup-plugin-babel-minify": "^9.1.1",
+    "rollup-plugin-uglify": "^6.0.4",
+    "typescript": "^3.7.5"
+  }
+}

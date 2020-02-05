@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "lib": [
+            "es2017",
+            "dom"
+        ],
+        "noEmit": true,
+        "isolatedModules": true,
+        "noImplicitAny": true
+    },
+    "include": [
+        "src"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}
