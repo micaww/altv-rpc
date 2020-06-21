@@ -29,6 +29,8 @@ export function init(namespace: string) {
     if (!namespace) throw 'Must specify a namespace.';
     if (!util.requestNamespace(namespace)) throw `Namespace "${namespace}" is already in use.`;
 
+    util.log(`Initialized with namespace "${namespace}"`);
+
     rpcNamespace = namespace;
 
     const processEventName = getEventName(PROCESS_EVENT);
@@ -64,7 +66,7 @@ function getEventName(prefix: string) {
 }
 
 function requireNamespace() {
-    if (!rpcNamespace) throw `You must first call rpc.init() with a namespace.`;
+    if (!rpcNamespace) throw new Error(`You must first call rpc.init() with a namespace.`);
 }
 
 /**
@@ -75,6 +77,8 @@ function requireNamespace() {
  * @param webView - the webview that sent us the event, only on client environment
  */
 function processEvent(rawData: string, player?: any, webView?: any) {
+    util.log(`Processing Event: ${rawData}${player ? ' from player' : ''}${webView ? ' from cef' : ''}`);
+
     const data: Event = util.parseData(rawData);
 
     const processEventName = getEventName(PROCESS_EVENT);
@@ -113,7 +117,7 @@ function processEvent(rawData: string, player?: any, webView?: any) {
             }
             case 'cef': {
                 // send an event back to the client
-                ret = ev => alt.emit(processEventName, ev);
+                ret = ev => alt.emit(PROCESS_EVENT, ev);
             }
         }
 
@@ -147,13 +151,15 @@ export function addWebView(webView: any) {
 
     if (environment !== "client") throw 'addWebView can only be used on the client';
 
-    webView.on(getEventName(PROCESS_EVENT), (rawData: string) => processEvent(rawData, undefined, webView));
+    if (!rpcBrowsers.includes(webView)) {
+        webView.on(PROCESS_EVENT, (rawData: string) => processEvent(rawData, undefined, webView));
 
-    webView.on(getEventName(BROWSER_REGISTER), (procedure: string) => {
-        rpcBrowserProcedures[procedure] = webView;
-    });
+        webView.on(BROWSER_REGISTER, (procedure: string) => {
+            rpcBrowserProcedures[procedure] = webView;
+        });
 
-    rpcBrowsers.push(webView);
+        rpcBrowsers.push(webView);
+    }
 }
 
 /**
@@ -162,13 +168,13 @@ export function addWebView(webView: any) {
  * @param {function} cb - The procedure's callback. The return value will be sent back to the caller.
  */
 export function register(name: string, cb: ProcedureListener): void {
-    requireNamespace();
-
     if(arguments.length !== 2) throw 'register expects 2 arguments: "name" and "cb"';
+
+    util.log(`Registered procedure "${name}"`);
 
     if (environment === 'cef') {
         // notify the client that we have ownership of this procedure
-        alt.emit(getEventName(BROWSER_REGISTER), name);
+        alt.emit(BROWSER_REGISTER, name);
     }
 
     rpcListeners[name] = cb;
@@ -300,7 +306,7 @@ function _callClient(player: any, name: string, args?: any, extraData: any = {})
                     ...extraData
                 };
 
-                alt.emit(getEventName(PROCESS_EVENT), util.stringifyData(event));
+                alt.emit(PROCESS_EVENT, util.stringifyData(event));
             });
         }
     }

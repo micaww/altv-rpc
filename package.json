@@ -2,11 +2,13 @@
   "name": "altv-rpc",
   "version": "0.1.0",
   "description": "An asynchronous RPC implementation for alt:V",
-  "main": "dist/altv-rpc.min.js",
+  "main": "dist/altv-rpc.mjs",
+  "browser": "dist/altv-rpc-browser.js",
   "types": "dist/altv-rpc.d.ts",
   "scripts": {
     "watch": "rollup -c -w",
-    "build": "rollup -c --environment BUILD:production",
+    "build:dev": "rollup -c --environment NODE_ENV:development",
+    "build:prod": "rollup -c --environment NODE_ENV:production",
     "type-check": "tsc"
   },
   "files": [
@@ -28,9 +30,11 @@
     "@babel/preset-env": "^7.8.4",
     "@babel/preset-typescript": "^7.8.3",
     "@rollup/plugin-node-resolve": "^7.1.1",
+    "@rollup/plugin-replace": "^2.3.1",
     "rollup": "^1.31.0",
     "rollup-plugin-babel": "^4.3.3",
     "rollup-plugin-babel-minify": "^9.1.1",
+    "rollup-plugin-modify": "^3.0.0",
     "rollup-plugin-uglify": "^6.0.4",
     "typescript": "^3.7.5"
   }

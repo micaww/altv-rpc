@@ -138,3 +138,11 @@ export function requestNamespace(ns: string) {
 
     return true;
 }
+
+export function log(data: string) {
+    const env = getEnvironment();
+
+    if (process.env.NODE_ENV !== 'production') {
+        (alt.log || console.log)(`RPC (${env}): ${data}`);
+    }
+}
