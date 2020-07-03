@@ -3,11 +3,6 @@ import alt from 'alt';
 const glob = getGlobal();
 const setTimeout = alt.setTimeout || glob.setTimeout;
 
-enum MpTypes {
-    Player = 'pl',
-    Vehicle = 'v'
-}
-
 /**
  * Generates a random ID.
  */
@@ -23,32 +18,22 @@ export function uid(): string {
  * Gets the current execution environment.
  */
 export function getEnvironment(): string {
-    if(!alt.Player) return 'cef';
-    else if(alt.Player.local) return 'client';
-    else if(alt.Player) return 'server';
+    if (!alt.Player) return 'cef';
+    else if (alt.Player.local) return 'client';
+    else if (alt.Player) return 'server';
 }
 
 /**
  * Stringifies an event's data for transmission.
- *
- * @param data
  */
 export function stringifyData(data: any): string {
     const env = getEnvironment();
 
     return JSON.stringify(data, (_, value) => {
-        if(env === 'client' || env === 'server' && value && typeof value === 'object'){
-            let type;
-
-            if(value instanceof alt.Player) type = MpTypes.Player;
-            else if(value instanceof alt.Vehicle) type = MpTypes.Vehicle;
-
-            if (type) {
-                return {
-                    __t: type,
-                    i: value.id
-                };
-            }
+        if ((env === 'client' || env === 'server') && value instanceof alt.Entity) {
+            return {
+                __i: value.id
+            };
         }
 
         return value;
@@ -57,21 +42,13 @@ export function stringifyData(data: any): string {
 
 /**
  * Turns stringified event data back into a JS object.
- *
- * @param data
  */
 export function parseData(data: string): any {
     const env = getEnvironment();
 
     return JSON.parse(data, (_, value) => {
-        if((env === 'client' || env === 'server') && value && typeof value === 'object' && typeof value['__t'] === 'string' && typeof value.i === 'number' && Object.keys(value).length === 2){
-            const id = value.i;
-            const type = value['__t'];
-
-            switch (type) {
-                case MpTypes.Player: return alt.Player.getByID(id);
-                case MpTypes.Vehicle: return alt.Vehicle.getByID(id);
-            }
+        if ((env === 'client' || env === 'server') && typeof value === 'object' && typeof value.__i === 'number' && Object.keys(value).length === 1) {
+            return alt.Entity.getByID(value.__i);
         }
 
         return value;
@@ -80,18 +57,16 @@ export function parseData(data: string): any {
 
 /**
  * Waits for a promise to be settled or a timeout, whichever comes first.
- * @param promise
- * @param timeout
  */
 export function promiseTimeout(promise: Promise<any>, timeout?: number){
-    if(typeof timeout === 'number'){
+    if (typeof timeout === 'number') {
         return Promise.race([
             new Promise((_, reject) => {
                 setTimeout(() => reject('TIMEOUT'), timeout);
             }),
             promise
         ]);
-    }else return promise;
+    } else return promise;
 }
 
 /**
@@ -104,8 +79,6 @@ function getGlobal(): any {
 
 /**
  * Requests a namespace. Returns false if it's already in use.
- *
- * @param ns
  */
 export function requestNamespace(ns: string) {
     const key = '__rpc:namespaces';
