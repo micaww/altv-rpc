@@ -47,7 +47,7 @@ export function parseData(data: string): any {
     const env = getEnvironment();
 
     return JSON.parse(data, (_, value) => {
-        if ((env === 'client' || env === 'server') && typeof value === 'object' && typeof value.__i === 'number' && Object.keys(value).length === 1) {
+        if ((env === 'client' || env === 'server') && value && typeof value === 'object' && typeof value.__i === 'number' && Object.keys(value).length === 1) {
             return alt.Entity.getByID(value.__i);
         }
 
@@ -118,4 +118,11 @@ export function log(data: string) {
     if (process.env.NODE_ENV !== 'production') {
         (alt.log || console.log)(`RPC (${env}): ${data}`);
     }
+}
+
+/**
+ * Splits a string into an array of chunks.
+ */
+export function chunk(data: string) {
+    return data.match(/.{1,10000}/g);
 }

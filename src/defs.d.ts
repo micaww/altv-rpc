@@ -17,16 +17,3 @@ declare interface CallOptions {
     timeout?: number;
     noRet?: boolean;
 }
-
-declare interface Event {
-    req?: number;
-    ret?: number;
-    id: string;
-    name?: string;
-    args?: any;
-    env: string;
-    fenv?: string;
-    res?: any;
-    err?: any;
-    noRet?: number;
-}

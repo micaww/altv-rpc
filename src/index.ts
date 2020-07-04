@@ -2,7 +2,7 @@ import alt from 'alt';
 import * as util from './util';
 
 const environment = util.getEnvironment();
-if(!environment) throw 'Unknown alt:V environment';
+if (!environment) throw 'Unknown alt:V environment';
 
 const ERR_NOT_FOUND = 'PROCEDURE_NOT_FOUND';
 
@@ -11,8 +11,72 @@ const BROWSER_REGISTER = '__rpc:browserRegister'; // event for when a browser re
 const TRIGGER_EVENT = '__rpc:triggerEvent'; // procedure for handling events
 const TRIGGER_EVENT_BROWSERS = '__rpc:triggerEventBrowsers'; // procedure for sending event to all browsers
 
+enum EventType {
+    REQUEST,
+    RESPONSE_SUCCESS,
+    RESPONSE_ERROR
+}
+
+/**
+ * Represents any packet used by RPC.
+ */
+interface Event {
+    /** The unique ID of this transmission. */
+    id: string;
+
+    /** The type of this event. */
+    type: EventType;
+
+    /** The name of the procedure we are going to be calling. */
+    name?: string;
+
+    /** The real environment that sent this packet. */
+    env: string;
+
+    /** The partial number of the original event. */
+    part: number;
+
+    /** The total number of event partials. */
+    total: number;
+
+    /** Stringified args partial. */
+    args?: string;
+
+    /** If set, we shouldn't return anything. */
+    noRet?: 1;
+
+    /** Environment override. Used for cef <-> server. */
+    fenv?: string;
+}
+
+/**
+ * Represents a request that is pending a response.
+ */
+interface Pending {
+    /** The player that we're expecting a response from. */
+    player?: any;
+
+    /** The resolve function for the promise. */
+    resolve: Function;
+}
+
+/**
+ * Represents an ongoing incoming RPC call.
+ */
+interface Incoming {
+    /** The stringified arguments that we have received so far. */
+    args?: string;
+
+    /** The number of parts we've received. */
+    recv: number;
+
+    /** The total number of parts we're expecting. */
+    total: number;
+}
+
 const rpcListeners: { [prop: string]: Function } = {}; // keeps track of procedure listeners
-const rpcPending: { [prop: string]: any } = {}; // keeps track of called procedures that are waiting on results
+const rpcPending: { [prop: string]: Pending } = {}; // keeps track of called procedures that are waiting on results
+const rpcIncoming: { [prop: string]: Incoming } = {}; // keeps track of incoming packets that might have multiple parts
 const rpcEvListeners: { [prop: string]: Set<Function> } = {}; // keeps track of event listeners
 const rpcBrowsers: any[] = []; // list of all registered webviews
 const rpcBrowserProcedures: { [prop: string]: any } = {}; // which webviews are registered to which procedures
@@ -21,8 +85,6 @@ let rpcNamespace = '';
 
 /**
  * Initializes RPC with a given namespace. Must be unique across all resources.
- *
- * @param namespace
  */
 export function init(namespace: string) {
     if (rpcNamespace) throw 'Already initialized.';
@@ -72,42 +134,57 @@ function requireNamespace() {
 /**
  * Processes an incoming event.
  *
- * @param rawData - the stringified event
+ * @param event - the event
  * @param player - whoever sent us the event, only on server environment
  * @param webView - the webview that sent us the event, only on client environment
  */
-function processEvent(rawData: string, player?: any, webView?: any) {
-    util.log(`Processing Event: ${rawData}${player ? ' from player' : ''}${webView ? ' from cef' : ''}`);
+function processEvent(event: Event, player?: any, webView?: any) {
+    util.log(`Processing Event: ${event.id} (${event.part}/${event.total})${player ? ' from player' : ''}${webView ? ' from cef' : ''}`);
 
-    const data: Event = util.parseData(rawData);
+    // keep track of incoming partials
+    const incoming = rpcIncoming[event.id] || {
+        recv: 0,
+        total: event.total
+    };
+
+    if (typeof event.args !== 'undefined') {
+        // add any args to our builder
+        if (!incoming.args) incoming.args = '';
+        incoming.args += event.args;
+    }
+    incoming.recv++;
+
+    rpcIncoming[event.id] = incoming;
+
+    // only process the event if we've received it all
+    if (incoming.recv < incoming.total) return;
+
+    util.log(`Stringified Args: ${incoming.args}`);
+
+    const args = typeof incoming.args !== 'undefined' ? util.parseData(incoming.args) : undefined;
 
     const processEventName = getEventName(PROCESS_EVENT);
 
-    if (data.req) { // someone is trying to remotely call a procedure
+    if (event.type === EventType.REQUEST) {
         const info: ProcedureListenerInfo = {
-            id: data.id,
-            environment: data.fenv || data.env,
+            id: event.id,
+            environment: event.fenv || event.env,
             player
         };
 
-        const part = {
-            ret: 1,
-            id: data.id,
-            env: environment
-        };
+        let ret: (event: Event) => void;
+        let split = true;
 
-        let ret: (rawData: string) => void;
-
-        switch(environment){
+        switch(environment) {
             case 'server':
                 // send an event back to the sender
                 ret = ev => alt.emitClient(player, processEventName, ev);
                 break;
             case 'client': {
-                if(data.env === 'server'){
+                if (event.env === 'server') {
                     // send an event back to the server
                     ret = ev => alt.emitServer(processEventName, ev);
-                }else if(data.env === 'cef'){
+                } else if (event.env === 'cef') {
                     info.browser = webView;
 
                     // send an event back to calling webview
@@ -118,19 +195,40 @@ function processEvent(rawData: string, player?: any, webView?: any) {
             case 'cef': {
                 // send an event back to the client
                 ret = ev => alt.emit(PROCESS_EVENT, ev);
+                split = false;
             }
         }
 
         if (ret) {
-            const promise = callProcedure(data.name, data.args, info);
-            if(!data.noRet) promise.then(res => ret(util.stringifyData({ ...part, res }))).catch(err => ret(util.stringifyData({ ...part, err: err !== null ? err : null })));
+            const promise = callProcedure(event.name, args, info);
+
+            if (!event.noRet) {
+                let type = EventType.RESPONSE_SUCCESS;
+                let args: any;
+
+                promise.then(res => {
+                    args = res;
+                }).catch(err => {
+                    type = EventType.RESPONSE_ERROR;
+                    args = err;
+                }).finally(() => {
+                    sendEvent({
+                        type,
+                        id: event.id,
+                        env: environment
+                    }, args, ret, split);
+                });
+            }
         }
-    }else if (data.ret) { // a previously called remote procedure has returned
-        const info = rpcPending[data.id];
-        if(environment === 'server' && info.player !== player) return;
+    } else { // a previously called remote procedure has returned
+        const info = rpcPending[event.id];
+
+        // make sure we are receiving the answer from the right player
+        if (environment === 'server' && info.player !== player) return;
+
         if (info) {
-            info.resolve(data.hasOwnProperty('err') ? Promise.reject(data.err) : data.res);
-            delete rpcPending[data.id];
+            info.resolve(event.type === EventType.RESPONSE_SUCCESS ? args : Promise.reject(args));
+            delete rpcPending[event.id];
         }
     }
 }
@@ -139,6 +237,31 @@ async function callProcedure(name: string, args: any, info: ProcedureListenerInf
     const listener = rpcListeners[name];
     if (!listener) throw ERR_NOT_FOUND;
     return listener(args, info);
+}
+
+/**
+ * Invokes the callback with each event partial after stringifying and splitting the arguments.
+ */
+function sendEvent(event: Omit<Event, 'args' | 'part' | 'total'>, args: any, callback: (event: Event) => void, split = true) {
+    const send = (part: number, total: number, args?: string) => callback({
+        ...event,
+        part,
+        total,
+        args
+    });
+
+    if (typeof args !== 'undefined') {
+        // we got args to send
+        const stringified = util.stringifyData(args);
+        const parts = split ? util.chunk(stringified) : [stringified];
+
+        parts.forEach((part, idx) => {
+            send(idx + 1, parts.length, part);
+        });
+    } else {
+        // sending no args
+        send(1, 1);
+    }
 }
 
 /**
@@ -152,7 +275,7 @@ export function addWebView(webView: any) {
     if (environment !== "client") throw 'addWebView can only be used on the client';
 
     if (!rpcBrowsers.includes(webView)) {
-        webView.on(PROCESS_EVENT, (rawData: string) => processEvent(rawData, undefined, webView));
+        webView.on(PROCESS_EVENT, (event: Event) => processEvent(event, undefined, webView));
 
         webView.on(BROWSER_REGISTER, (procedure: string) => {
             rpcBrowserProcedures[procedure] = webView;
@@ -204,7 +327,7 @@ export function call(name: string, args?: any, options: CallOptions = {}): Promi
     return util.promiseTimeout(callProcedure(name, args, { environment }), options.timeout);
 }
 
-function _callServer(name: string, args?: any, extraData: any = {}): Promise<any> {
+function _callServer(name: string, args?: any, extraData: Partial<Event> = {}): Promise<any> {
     requireNamespace();
 
     switch(environment){
@@ -214,20 +337,19 @@ function _callServer(name: string, args?: any, extraData: any = {}): Promise<any
         case 'client': {
             const id = util.uid();
             return new Promise(resolve => {
-                if(!extraData.noRet){
+                if (!extraData.noRet) {
                     rpcPending[id] = {
                         resolve
                     };
                 }
-                const event: Event = {
-                    req: 1,
+
+                sendEvent({
+                    type: EventType.REQUEST,
                     id,
                     name,
                     env: environment,
-                    args,
                     ...extraData
-                };
-                alt.emitServer(getEventName(PROCESS_EVENT), util.stringifyData(event));
+                }, args, ev => alt.emitServer(getEventName(PROCESS_EVENT), ev));
             });
         }
         case 'cef': {
@@ -249,18 +371,18 @@ function _callServer(name: string, args?: any, extraData: any = {}): Promise<any
 export function callServer(name: string, args?: any, options: CallOptions = {}): Promise<any> {
     requireNamespace();
 
-    if(arguments.length < 1 || arguments.length > 3) return Promise.reject('callServer expects 1 to 3 arguments: "name", optional "args", and optional "options"');
+    if (arguments.length < 1 || arguments.length > 3) return Promise.reject('callServer expects 1 to 3 arguments: "name", optional "args", and optional "options"');
 
-    let extraData: any = {};
-    if(options.noRet) extraData.noRet = 1;
+    let extraData: Partial<Event> = {};
+    if (options.noRet) extraData.noRet = 1;
 
     return util.promiseTimeout(_callServer(name, args, extraData), options.timeout);
 }
 
-function _callClient(player: any, name: string, args?: any, extraData: any = {}): Promise<any> {
+function _callClient(player: any, name: string, args?: any, extraData: Partial<Event> = {}): Promise<any> {
     requireNamespace();
 
-    switch(environment){
+    switch (environment) {
         case 'client': {
             return call(name, args);
         }
@@ -268,45 +390,39 @@ function _callClient(player: any, name: string, args?: any, extraData: any = {})
             const id = util.uid();
 
             return new Promise(resolve => {
-                if(!extraData.noRet){
+                if (!extraData.noRet) {
                     rpcPending[id] = {
                         resolve,
                         player
                     };
                 }
 
-                const event: Event = {
-                    req: 1,
+                sendEvent({
+                    type: EventType.REQUEST,
                     id,
                     name,
                     env: environment,
-                    args,
                     ...extraData
-                };
-
-                alt.emitClient(player, getEventName(PROCESS_EVENT), util.stringifyData(event));
+                }, args, ev => alt.emitClient(player, getEventName(PROCESS_EVENT), ev));
             });
         }
         case 'cef': {
             const id = util.uid();
 
             return new Promise(resolve => {
-                if(!extraData.noRet){
+                if (!extraData.noRet) {
                     rpcPending[id] = {
                         resolve
                     };
                 }
 
-                const event: Event = {
-                    req: 1,
+                sendEvent({
+                    type: EventType.REQUEST,
                     id,
                     name,
                     env: environment,
-                    args,
                     ...extraData
-                };
-
-                alt.emit(PROCESS_EVENT, util.stringifyData(event));
+                }, args, ev => alt.emit(PROCESS_EVENT, ev), false);
             });
         }
     }
@@ -332,11 +448,11 @@ export function callClient(player: any | string, name?: string | any, args?: any
             args = name;
             name = player;
             player = null;
-            if((arguments.length < 1 || arguments.length > 3) || typeof name !== 'string') return Promise.reject('callClient from the client expects 1 to 3 arguments: "name", optional "args", and optional "options"');
+            if ((arguments.length < 1 || arguments.length > 3) || typeof name !== 'string') return Promise.reject('callClient from the client expects 1 to 3 arguments: "name", optional "args", and optional "options"');
             break;
         }
         case 'server': {
-            if((arguments.length < 2 || arguments.length > 4) || typeof player !== 'object') return Promise.reject('callClient from the server expects 2 to 4 arguments: "player", "name", optional "args", and optional "options"');
+            if ((arguments.length < 2 || arguments.length > 4) || typeof player !== 'object') return Promise.reject('callClient from the server expects 2 to 4 arguments: "player", "name", optional "args", and optional "options"');
             break;
         }
         case 'cef': {
@@ -344,50 +460,47 @@ export function callClient(player: any | string, name?: string | any, args?: any
             args = name;
             name = player;
             player = null;
-            if((arguments.length < 1 || arguments.length > 3) || typeof name !== 'string') return Promise.reject('callClient from the browser expects 1 to 3 arguments: "name", optional "args", and optional "options"');
+            if ((arguments.length < 1 || arguments.length > 3) || typeof name !== 'string') return Promise.reject('callClient from the browser expects 1 to 3 arguments: "name", optional "args", and optional "options"');
             break;
         }
     }
 
-    let extraData: any = {};
-    if(options.noRet) extraData.noRet = 1;
+    let extraData: Partial<Event> = {};
+    if (options.noRet) extraData.noRet = 1;
 
     return util.promiseTimeout(_callClient(player, name, args, extraData), options.timeout);
 }
 
-function _callBrowser(browser: any, name: string, args?: any, extraData: any = {}): Promise<any> {
+function _callBrowser(browser: any, name: string, args?: any, extraData: Partial<Event> = {}): Promise<any> {
     if (!browser || !browser.valid) return Promise.reject('INVALID_BROWSER');
     requireNamespace();
 
     return new Promise(resolve => {
         const id = util.uid();
 
-        if(!extraData.noRet){
+        if (!extraData.noRet) {
             rpcPending[id] = {
                 resolve
             };
         }
 
-        const event: Event = {
-            req: 1,
+        sendEvent({
+            type: EventType.REQUEST,
             id,
             name,
             env: environment,
-            args,
             ...extraData
-        };
-
-        browser.emit(getEventName(PROCESS_EVENT), util.stringifyData(event));
+        }, args, ev => browser.emit(getEventName(PROCESS_EVENT), ev), false);
     });
 }
 
-function _callBrowsers(player: any, name: string, args?: any, extraData: any = {}): Promise<any> {
+function _callBrowsers(player: any, name: string, args?: any, extraData: Partial<Event> = {}): Promise<any> {
     requireNamespace();
 
-    switch(environment){
+    switch (environment) {
         case 'client':
             const browser = rpcBrowserProcedures[name];
-            if(!browser || !browser.valid) return Promise.reject(ERR_NOT_FOUND);
+            if (!browser || !browser.valid) return Promise.reject(ERR_NOT_FOUND);
             return _callBrowser(browser, name, args, extraData);
         case 'server':
             return _callClient(player, '__rpc:callBrowsers', [name, args, +extraData.noRet], extraData);
@@ -411,26 +524,26 @@ export function callBrowsers(player: any | string, name?: string | any, args?: a
     requireNamespace();
 
     let promise;
-    let extraData: any = {};
+    let extraData: Partial<Event> = {};
 
-    switch(environment){
+    switch (environment) {
         case 'client':
         case 'cef':
             options = args || {};
             args = name;
             name = player;
-            if(arguments.length < 1 || arguments.length > 3) return Promise.reject('callBrowsers from the client or browser expects 1 to 3 arguments: "name", optional "args", and optional "options"');
-            if(options.noRet) extraData.noRet = 1;
+            if (arguments.length < 1 || arguments.length > 3) return Promise.reject('callBrowsers from the client or browser expects 1 to 3 arguments: "name", optional "args", and optional "options"');
+            if (options.noRet) extraData.noRet = 1;
             promise = _callBrowsers(null, name, args, extraData);
             break;
         case 'server':
-            if(arguments.length < 2 || arguments.length > 4) return Promise.reject('callBrowsers from the server expects 2 to 4 arguments: "player", "name", optional "args", and optional "options"');
-            if(options.noRet) extraData.noRet = 1;
+            if (arguments.length < 2 || arguments.length > 4) return Promise.reject('callBrowsers from the server expects 2 to 4 arguments: "player", "name", optional "args", and optional "options"');
+            if (options.noRet) extraData.noRet = 1;
             promise = _callBrowsers(player, name, args, extraData);
             break;
     }
 
-    if(promise){
+    if (promise) {
         return util.promiseTimeout(promise, options.timeout);
     }
 }
