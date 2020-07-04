@@ -33,7 +33,8 @@ export default [
         input: './src/index.ts',
         output: {
             file: './dist/altv-rpc-browser.js',
-            format: 'esm'
+            format: 'umd',
+            name: 'rpc'
         },
         plugins: [
             replace({
