@@ -159,6 +159,8 @@ function processEvent(event: Event, player?: any, webView?: any) {
     // only process the event if we've received it all
     if (incoming.recv < incoming.total) return;
 
+    delete rpcIncoming[event.id];
+
     util.log(`Stringified Args: ${incoming.args}`);
 
     const args = typeof incoming.args !== 'undefined' ? util.parseData(incoming.args) : undefined;

@@ -46,13 +46,18 @@ export function stringifyData(data: any): string {
 export function parseData(data: string): any {
     const env = getEnvironment();
 
-    return JSON.parse(data, (_, value) => {
-        if ((env === 'client' || env === 'server') && value && typeof value === 'object' && typeof value.__i === 'number' && Object.keys(value).length === 1) {
-            return alt.Entity.getByID(value.__i);
-        }
+    try {
+        return JSON.parse(data, (_, value) => {
+            if ((env === 'client' || env === 'server') && value && typeof value === 'object' && typeof value.__i === 'number' && Object.keys(value).length === 1) {
+                return alt.Entity.getByID(value.__i);
+            }
 
-        return value;
-    });
+            return value;
+        });
+    } catch (e) {
+        log(`Failed to parse event arguments: ${e.message}`, true);
+        log(data, true);
+    }
 }
 
 /**
@@ -112,10 +117,10 @@ export function requestNamespace(ns: string) {
     return true;
 }
 
-export function log(data: string) {
+export function log(data: string, always = false) {
     const env = getEnvironment();
 
-    if (process.env.NODE_ENV !== 'production') {
+    if (always || process.env.NODE_ENV !== 'production') {
         (alt.log || console.log)(`RPC (${env}): ${data}`);
     }
 }
