@@ -548,7 +548,7 @@ rpc.register('toggleHUD', toggle => {
 
 Client-side OR Browser:
 ```javascript
-rpc.callBrowsers('toggleChat', false);
+rpc.callBrowsers('toggleHUD', false);
 ```
 
 ###### Returns [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) resolving or failing due to the procedure's result. If the procedure called does not exist, `PROCEDURE_NOT_FOUND` will be thrown.
