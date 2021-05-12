@@ -472,7 +472,7 @@ rpc.register('toggleHUD', toggle => {
 Server-side:
 ```javascript
 mp.players.forEach(player => {
-    rpc.callClient(player, 'toggleChat', false);
+    rpc.callClient(player, 'toggleHUD', false);
 });
 ```
 
